@@ -1,0 +1,17 @@
+
+==-------------------------= How To Use =-------------------------==
+
+- On your terrain, add the component "EDEN Shadergraph To Terrain"
+- Press "Create New Template Shader" to start creating your custom heightmap.
+- Make sure you assign your shader to the "Shader" property on the EDEN component.
+- Press "Generate Heightmap" and your terrain is done!
+- You will need to press "Generate Heightmap" twice due to a bug in Unity.
+
+
+==-------------------------=---------------------=-------------------------==
+
+Please consider leaving a review for my asset as it really helps :)
+For any questions, or to show me what you have made with my asset, 
+please email me at wgappster@gmail.com
+
+==-------------------------=---------------------=-------------------------==

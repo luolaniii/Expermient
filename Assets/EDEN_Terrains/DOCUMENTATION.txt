@@ -1,0 +1,14 @@
+==-------------------------= Setup =-------------------------==
+
+ - Open Demo Scene.
+ - If terrains are not visible:
+	- First - Make sure your camera Far Plane is set to an appropriate amount (remember, these terrains are 10kmx10km each)
+	- Second - Select the "Terrain" material in Assets/EDEN_Terrains. next, select "Shader" and seach for "Terrain". Select the terrain shader for the render pipeline you are using.
+
+==-------------------------=-----------=-------------------------==
+
+Please consider leaving a review for my asset as it really helps :)
+For any questions, or to show what you have made with my asset, 
+please email me at wgappster@gmail.com
+
+==-------------------------=-----------=-------------------------==
