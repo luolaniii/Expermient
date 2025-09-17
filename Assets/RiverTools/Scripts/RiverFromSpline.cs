@@ -61,8 +61,7 @@ namespace RiverTools
 			#if UNITY_2022_2_OR_NEWER
 			if (spline == null || spline.Spline == null || spline.Spline.Count < 2) return;
 
-			float3x4[] frames;
-			float length = SplineUtility.CalculateLength(spline.Spline, out frames);
+			float length = SplineUtility.CalculateLength(spline.Spline);
 			if (length <= 0.001f) return;
 
 			int segments = math.max(1, spline.Spline.Count - 1);

@@ -46,8 +46,8 @@ namespace RiverTools
 
 			RenderTexture.active = rt;
 			Texture2D tex = new Texture2D(textureSize, textureSize, TextureFormat.RGBA32, false, true);
-			ex.ReadPixels(new Rect(0, 0, textureSize, textureSize), 0, 0, false);
-			ex.Apply(false, false);
+			tex.ReadPixels(new Rect(0, 0, textureSize, textureSize), 0, 0, false);
+			tex.Apply(false, false);
 			RenderTexture.active = prev;
 
 			#if UNITY_EDITOR
