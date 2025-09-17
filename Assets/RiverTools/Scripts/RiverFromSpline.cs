@@ -96,7 +96,17 @@ namespace RiverTools
 				float halfWidth = baseHalfWidth * widthMul;
 
 				Vector3 forward = (spline.transform.TransformVector(tan)).normalized;
-				Vector3 left = Vector3.Normalize(new Vector3(-forward.z, 0f, forward.x));
+				// Stable left: use cross with up, fallback to previous when nearly parallel
+				if (!hasPrev) { }
+				Vector3 left = Vector3.Cross(Vector3.up, forward);
+				if (left.sqrMagnitude < 1e-6f)
+				{
+					left = hasPrev ? Vector3.Normalize(Vector3.Cross(Vector3.up, (prevPos - pos).normalized)) : Vector3.left;
+				}
+				else
+				{
+					left.Normalize();
+				}
 
 				Vector3 pL = pos + left * halfWidth;
 				Vector3 pR = pos - left * halfWidth;
