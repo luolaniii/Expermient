@@ -28,6 +28,14 @@ namespace RiverTools
 		[Tooltip("Foam increases with slope. This scales the response.")]
 		public float foamSlopeScale = 2.0f;
 
+		[Header("Shading/Stability")]
+		[Tooltip("When enabled, vertex colors encode path/gravity/foam weights; when off, vertex colors are white to avoid unintended tinting in shaders.")]
+		public bool writeVertexColors = true;
+		[Tooltip("Force normals to (0,1,0) after build to get stable lighting for water.")]
+		public bool forceUpNormals = false;
+		[Tooltip("Lift the surface slightly to prevent z-fighting with terrain.")]
+		public float surfaceYOffset = 0.02f;
+
 		Mesh _mesh;
 		MeshFilter _mf;
 		MeshCollider _mc;
@@ -108,8 +116,8 @@ namespace RiverTools
 					left.Normalize();
 				}
 
-				Vector3 pL = pos + left * halfWidth;
-				Vector3 pR = pos - left * halfWidth;
+				Vector3 pL = pos + left * halfWidth + Vector3.up * surfaceYOffset;
+				Vector3 pR = pos - left * halfWidth + Vector3.up * surfaceYOffset;
 
 				// approximate slope from forward.y
 				float dy = Mathf.Abs(forward.y);
@@ -133,8 +141,8 @@ namespace RiverTools
 				uv2.Add(flowXZ * 0.5f + new Vector2(0.5f, 0.5f));
 				uv2.Add(flowXZ * 0.5f + new Vector2(0.5f, 0.5f));
 
-				// Colors: R=path weight, G=gravity weight, B=foam, A=1
-				Color c = new Color(pathW, gravityW, foam, 1f);
+				// Colors: R=path weight, G=gravity weight, B=foam, A=1 (optional)
+				Color c = writeVertexColors ? new Color(pathW, gravityW, foam, 1f) : Color.white;
 				colors.Add(c);
 				colors.Add(c);
 			}
@@ -153,6 +161,12 @@ namespace RiverTools
 			_mesh.SetColors(colors);
 			_mesh.SetTriangles(indices, 0);
 			_mesh.RecalculateNormals();
+			if (forceUpNormals)
+			{
+				var norms = _mesh.normals;
+				for (int i = 0; i < norms.Length; i++) norms[i] = Vector3.up;
+				_mesh.normals = norms;
+			}
 			_mesh.RecalculateBounds();
 
 			_mf.sharedMesh = _mesh;
