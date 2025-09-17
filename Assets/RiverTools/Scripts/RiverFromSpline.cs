@@ -36,6 +36,11 @@ namespace RiverTools
 		[Tooltip("Lift the surface slightly to prevent z-fighting with terrain.")]
 		public float surfaceYOffset = 0.02f;
 
+		[Header("Terrain Snapping (optional)")]
+		[Tooltip("If enabled, project the river edges to the Terrain height so water sits on the ground.")]
+		public bool snapToTerrain = false;
+		public Terrain terrain;
+
 		Mesh _mesh;
 		MeshFilter _mf;
 		MeshCollider _mc;
@@ -116,8 +121,20 @@ namespace RiverTools
 					left.Normalize();
 				}
 
-				Vector3 pL = pos + left * halfWidth + Vector3.up * surfaceYOffset;
-				Vector3 pR = pos - left * halfWidth + Vector3.up * surfaceYOffset;
+				Vector3 pL = pos + left * halfWidth;
+				Vector3 pR = pos - left * halfWidth;
+				if (snapToTerrain && terrain != null && terrain.terrainData != null)
+				{
+					float yL = terrain.SampleHeight(pL) + terrain.transform.position.y;
+					float yR = terrain.SampleHeight(pR) + terrain.transform.position.y;
+					pL.y = yL + surfaceYOffset;
+					pR.y = yR + surfaceYOffset;
+				}
+				else
+				{
+					pL += Vector3.up * surfaceYOffset;
+					pR += Vector3.up * surfaceYOffset;
+				}
 
 				// approximate slope from forward.y
 				float dy = Mathf.Abs(forward.y);
