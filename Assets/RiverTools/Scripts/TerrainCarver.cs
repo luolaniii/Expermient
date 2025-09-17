@@ -24,10 +24,29 @@ namespace RiverTools
 		[Tooltip("Softness of the river cross section edges (0=hard, 1=soft)")]
 		[Range(0f,1f)] public float edgeSoftness = 0.5f;
 
+		[Header("Width Source")]
+		[Tooltip("Use RiverFromSpline width as base and scale it for carving.")]
+		public bool useRiverWidth = false;
+		public RiverFromSpline riverSource;
+		[Range(0.1f, 1.0f)] public float carveWidthScale = 0.7f; // narrower than river
+		[Min(0.1f)] public float overrideHalfWidthMeters = 2f;   // used when not using river width
+
 		[Header("Sampling")]
 		[Min(8)] public int samplesAlong = 256;
 		[Tooltip("Inflate edit bounds in meters around the path to limit SetHeights region")]
 		public float editBoundsPadding = 5f;
+
+		[Header("Baseline/Reapply")]
+		[Tooltip("If set, carving starts from this TerrainData's heights each time.")]
+		public TerrainData sourceTerrainData;
+		[Tooltip("Remember current heights in memory as the baseline to re-carve from.")]
+		public bool rememberBaselineInMemory = false;
+		[SerializeField] int _baselineRes = 0;
+		[SerializeField] float[] _baselineHeights1D; // row-major (z,x)
+
+		[Header("Automation")]
+		[Tooltip("Automatically re-carve in editor when parameters change.")]
+		public bool autoCarveOnValidate = false;
 
 		[ContextMenu("Carve Terrain")]
 		public void Carve()
@@ -52,8 +71,28 @@ namespace RiverTools
 			float sizeY = td.size.y;
 			Vector3 origin = terrain.transform.position;
 
-			// Work on the full heightmap for simplicity
-			float[,] heights = td.GetHeights(0, 0, res, res);
+			// Initialize heights from source/baseline/current
+			float[,] heights;
+			if (sourceTerrainData != null && sourceTerrainData.heightmapResolution == res)
+			{
+				heights = sourceTerrainData.GetHeights(0, 0, res, res);
+			}
+			else if (rememberBaselineInMemory && _baselineHeights1D != null && _baselineRes == res)
+			{
+				heights = new float[res, res];
+				for (int z = 0; z < res; z++)
+				{
+					for (int x = 0; x < res; x++)
+					{
+						int idx = z * res + x;
+						heights[z, x] = _baselineHeights1D[idx];
+					}
+				}
+			}
+			else
+			{
+				heights = td.GetHeights(0, 0, res, res);
+			}
 
 			// Track edited region to minimize SetHeights area
 			int minX = res - 1, minZ = res - 1, maxX = 0, maxZ = 0;
@@ -78,7 +117,8 @@ namespace RiverTools
 
 				// Define width and depth at this longitudinal position
 				float uNorm = t; // already 0..1 param
-				float halfWidth = baseHalfWidth * Mathf.Max(0.0001f, widthOverU.Evaluate(uNorm));
+				float baseHW = useRiverWidth && riverSource != null ? riverSource.baseHalfWidth * carveWidthScale : Mathf.Max(0.0001f, overrideHalfWidthMeters);
+				float halfWidth = baseHW * Mathf.Max(0.0001f, widthOverU.Evaluate(uNorm));
 				float depthMeters = maxDepthMeters * Mathf.Max(0.0f, depthOverU.Evaluate(uNorm));
 
 				// Left direction stable
@@ -140,6 +180,39 @@ namespace RiverTools
 					}
 				}
 				terrain.terrainData.SetHeights(minX, minZ, region);
+			}
+		}
+
+		[ContextMenu("Capture Baseline From Current Terrain")]
+		public void CaptureBaseline()
+		{
+			if (terrain == null || terrain.terrainData == null) return;
+			var td = terrain.terrainData;
+			int res = td.heightmapResolution;
+			var heights = td.GetHeights(0, 0, res, res);
+			_baselineRes = res;
+			_baselineHeights1D = new float[res * res];
+			for (int z = 0; z < res; z++)
+			{
+				for (int x = 0; x < res; x++)
+				{
+					_baselineHeights1D[z * res + x] = heights[z, x];
+				}
+			}
+		}
+
+		[ContextMenu("Clear Baseline")]
+		public void ClearBaseline()
+		{
+			_baselineRes = 0;
+			_baselineHeights1D = null;
+		}
+
+		void OnValidate()
+		{
+			if (autoCarveOnValidate)
+			{
+				Carve();
 			}
 		}
 
