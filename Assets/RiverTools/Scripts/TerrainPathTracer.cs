@@ -75,10 +75,17 @@ namespace RiverTools
 					lowSlopeCount = 0;
 				}
 
-				if (downhill.sqrMagnitude < 1e-10f) break;
+				// Move along the surface: step in XZ along downhill, then resample height at new XZ
+				Vector3 moveXZ = new Vector3(downhill.x, 0f, downhill.z);
+				if (moveXZ.sqrMagnitude < 1e-10f) break;
 
 				_rawPoints.Add(pos);
-				pos += downhill.normalized * stepSizeMeters;
+				Vector3 next = pos + moveXZ.normalized * stepSizeMeters;
+				// keep within bounds and glue to terrain height
+				next.x = Mathf.Clamp(next.x, terrainBounds.min.x + edgePaddingMeters, terrainBounds.max.x - edgePaddingMeters);
+				next.z = Mathf.Clamp(next.z, terrainBounds.min.z + edgePaddingMeters, terrainBounds.max.z - edgePaddingMeters);
+				next.y = SampleHeight(next);
+				pos = next;
 			}
 
 			// add last position
