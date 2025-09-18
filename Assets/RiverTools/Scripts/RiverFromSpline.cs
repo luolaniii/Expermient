@@ -38,8 +38,12 @@ namespace RiverTools
 
 		[Header("Terrain Snapping (optional)")]
 		[Tooltip("If enabled, project the river edges to the Terrain height so water sits on the ground.")]
-		public bool snapToTerrain = false;
+		public bool snapToTerrain = true;
 		public Terrain terrain;
+
+		[Header("Carver Integration")]
+		[Tooltip("Optional reference to a TerrainCarver to sync width and carve.")]
+		public TerrainCarver carverRef;
 
 		Mesh _mesh;
 		MeshFilter _mf;
@@ -193,6 +197,35 @@ namespace RiverTools
 				if (_mc == null) _mc = gameObject.AddComponent<MeshCollider>();
 				_mc.sharedMesh = _mesh;
 			}
+			#endif
+		}
+
+		[ContextMenu("Sync Carver Width From This River + Carve")]
+		public void SyncCarverWidthAndCarve()
+		{
+			#if UNITY_EDITOR
+			// Try find a carver if not assigned
+			if (carverRef == null)
+			{
+				carverRef = GetComponent<TerrainCarver>();
+				if (carverRef == null) carverRef = FindObjectOfType<TerrainCarver>();
+			}
+			if (carverRef == null)
+			{
+				UnityEngine.Debug.LogWarning("RiverFromSpline: No TerrainCarver found to sync.");
+				return;
+			}
+			// Wire references and sync width settings
+			carverRef.spline = this.spline;
+			if (carverRef.terrain == null && this.terrain != null)
+			{
+				carverRef.terrain = this.terrain;
+			}
+			carverRef.useRiverWidth = true;
+			carverRef.riverSource = this;
+			// Keep user's carveWidthScale value; if not set, leave default
+			// Execute carve
+			carverRef.Carve();
 			#endif
 		}
 	}
