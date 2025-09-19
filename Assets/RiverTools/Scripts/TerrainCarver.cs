@@ -70,23 +70,13 @@ namespace RiverTools
 		[Tooltip("Stop when total traced length exceeds this value (meters). 0 disables.")]
 		public float traceMaxLengthMeters = 0f;
 
-		[Header("Continuity/Smoothing")]
-		[Tooltip("Fill gaps between stamps by stamping along the path segment.")]
-		public bool fillGaps = true;
-		[Tooltip("Max spacing between consecutive stamps as a factor of half width (<=1). 0.5 means stamp every half-width.")]
-		[Range(0.1f, 1f)] public float maxStampSpacingHalfWidthFactor = 0.5f;
+		[Header("Smoothing")]
 		[Tooltip("Optional box-blur passes over carved corridor to smooth pits.")]
 		[Range(0,4)] public int postSmoothPasses = 0;
 		[Tooltip("Box blur radius (in pixels) for post-smoothing.")]
 		[Range(1,3)] public int postSmoothRadiusPx = 1;
 
-		[Header("Debug")]
-		public bool debugLog = false;
-		public bool debugGizmos = true;
-		public Color gizmoColor = new Color(1f, 0.2f, 1f, 1f);
-		System.Collections.Generic.List<Vector3> _lastTrace = new System.Collections.Generic.List<Vector3>();
-		int _lastEditedPixels = 0;
-		int _lastSteps = 0;
+		// Debug fields removed in slim version
 
 		[ContextMenu("Carve Terrain")]
 		public void Carve()
@@ -97,17 +87,10 @@ namespace RiverTools
 				return;
 			}
 			#if UNITY_2022_2_OR_NEWER
-			_lastTrace.Clear();
-			_lastEditedPixels = 0;
-			_lastSteps = 0;
-
-			if (!carveFromStart)
+			if (spline == null || spline.Spline == null || spline.Spline.Count < 2)
 			{
-				if (spline == null || spline.Spline == null || spline.Spline.Count < 2)
-				{
-					Debug.LogError("TerrainCarver: Assign a valid SplineContainer or enable carveFromStart.");
-					return;
-				}
+				Debug.LogError("TerrainCarver: Assign a valid SplineContainer.");
+				return;
 			}
 			#endif
 
@@ -144,7 +127,6 @@ namespace RiverTools
 			// Track edited region to minimize SetHeights area
 			int minX = res - 1, minZ = res - 1, maxX = 0, maxZ = 0;
 
-			if (!carveFromStart)
 			{
 				// Iterate along spline
 				#if UNITY_2022_2_OR_NEWER
@@ -171,93 +153,11 @@ namespace RiverTools
 					}
 
 					float uNorm = t;
-					_lastEditedPixels += ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY,
+					ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY,
 						center, forward, uNorm,
 						useRiverWidth && riverSource != null ? riverSource.baseHalfWidth * carveWidthScale : Mathf.Max(0.0001f, overrideHalfWidthMeters));
 				}
-			}
-			else
-			{
-				// Direct trace mode: step downhill along terrain surface from traceStart
-				if (traceStart == null)
-				{
-					Debug.LogError("TerrainCarver: traceStart is null while carveFromStart is enabled.");
-					return;
-				}
-				Bounds b = new Bounds(origin + td.size * 0.5f, td.size);
-				Vector3 pos = traceStart.position;
-				pos.x = Mathf.Clamp(pos.x, b.min.x + 1f, b.max.x - 1f);
-				pos.z = Mathf.Clamp(pos.z, b.min.z + 1f, b.max.z - 1f);
-				pos.y = terrain.SampleHeight(pos) + origin.y;
 
-				int lowSlope = 0;
-				float traveled = 0f;
-				float stopY = float.NegativeInfinity;
-				if (stopAtTargetHeight != null) stopY = stopAtTargetHeight.position.y;
-				else if (stopAtWorldHeight) stopY = stopWorldHeightY;
-
-				Vector3 prevCenter = pos;
-				for (int step = 0; step < traceMaxSteps; step++)
-				{
-					_lastSteps = step + 1;
-					// Compute downhill direction via terrain normal
-					Vector3 local = pos - origin;
-					float u = Mathf.Clamp01(local.x / sizeX);
-					float v = Mathf.Clamp01(local.z / sizeZ);
-					Vector3 n = td.GetInterpolatedNormal(u, v).normalized;
-					Vector3 g = Vector3.down;
-					Vector3 downhill = g - n * Vector3.Dot(g, n);
-					float slope = downhill.magnitude;
-					if (slope < traceMinSlope)
-					{
-						lowSlope++;
-						if (lowSlope >= traceLowSlopeHysteresis) break;
-					}
-					else lowSlope = 0;
-
-					Vector3 forward = new Vector3(downhill.x, 0f, downhill.z);
-					if (forward.sqrMagnitude < 1e-10f) break;
-					forward.Normalize();
-
-					// normalized longitudinal progress approximation
-					float uNorm = (traceMaxLengthMeters > 0f) ? Mathf.Clamp01(traveled / traceMaxLengthMeters) : Mathf.Clamp01((float)step / Mathf.Max(1, traceMaxSteps - 1));
-					_lastTrace.Add(pos);
-					float baseHW = useRiverWidth && riverSource != null ? riverSource.baseHalfWidth * carveWidthScale : Mathf.Max(0.0001f, overrideHalfWidthMeters);
-					if (fillGaps)
-					{
-						_lastEditedPixels += ApplyTrenchAlongSegment(ref heights, res, origin, sizeX, sizeZ, sizeY,
-							prevCenter, pos, forward, uNorm, baseHW);
-					}
-					else
-					{
-						_lastEditedPixels += ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY,
-							pos, forward, uNorm, baseHW);
-					}
-
-					// advance
-					Vector3 stepVec = forward * traceStepMeters;
-					Vector3 next = pos + stepVec;
-					traveled += stepVec.magnitude;
-					if (traceMaxLengthMeters > 0f && traveled >= traceMaxLengthMeters) { pos = next; break; }
-					next.x = Mathf.Clamp(next.x, b.min.x + 1f, b.max.x - 1f);
-					next.z = Mathf.Clamp(next.z, b.min.z + 1f, b.max.z - 1f);
-					next.y = terrain.SampleHeight(next) + origin.y;
-					if (!float.IsNegativeInfinity(stopY) && next.y <= stopY) { pos = next; break; }
-					prevCenter = pos;
-					pos = next;
-				}
-			}
-
-			if (carveFromStart)
-			{
-				// In direct trace mode, apply full heightmap to ensure changes are written
-				if (postSmoothPasses > 0)
-				{
-					RunBoxBlur(ref heights, postSmoothPasses, postSmoothRadiusPx);
-				}
-				terrain.terrainData.SetHeights(0, 0, heights);
-			}
-			else
 			{
 				// Apply full heightmap in spline mode to ensure complete corridor is written
 				if (postSmoothPasses > 0)
@@ -265,11 +165,6 @@ namespace RiverTools
 					RunBoxBlur(ref heights, postSmoothPasses, postSmoothRadiusPx);
 				}
 				terrain.terrainData.SetHeights(0, 0, heights);
-			}
-
-			if (debugLog)
-			{
-				Debug.Log($"TerrainCarver: steps={_lastSteps}, editedPixels~={_lastEditedPixels}, mode={(carveFromStart ? "trace" : "spline")}");
 			}
 		}
 
@@ -326,24 +221,6 @@ namespace RiverTools
 			return edited;
 		}
 
-		int ApplyTrenchAlongSegment(ref float[,] heights, int res, Vector3 origin, float sizeX, float sizeZ, float sizeY,
-			Vector3 from, Vector3 to, Vector3 forwardHint, float uNorm, float baseHalfWidthMeters)
-		{
-			float halfWidth = baseHalfWidthMeters * Mathf.Max(0.0001f, widthOverU.Evaluate(uNorm));
-			float segmentLen = Vector3.Distance(from, to);
-			if (segmentLen < 1e-4f) return 0;
-			float maxStep = Mathf.Max(0.1f, halfWidth * maxStampSpacingHalfWidthFactor);
-			int steps = Mathf.CeilToInt(segmentLen / maxStep);
-			int edited = 0;
-			for (int i = 0; i <= steps; i++)
-			{
-				float t = steps == 0 ? 0f : (float)i / steps;
-				Vector3 c = Vector3.Lerp(from, to, t);
-				Vector3 fwd = (to - from).sqrMagnitude > 1e-6f ? (to - from).normalized : forwardHint;
-				edited += ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY, c, fwd, uNorm, baseHalfWidthMeters);
-			}
-			return edited;
-		}
 
 		void RunBoxBlur(ref float[,] h, int passes, int radius)
 		{
@@ -405,15 +282,7 @@ namespace RiverTools
 			}
 		}
 
-		void OnDrawGizmos()
-		{
-			if (!debugGizmos || _lastTrace == null || _lastTrace.Count < 2) return;
-			Gizmos.color = gizmoColor;
-			for (int i = 1; i < _lastTrace.Count; i++)
-			{
-				Gizmos.DrawLine(_lastTrace[i - 1], _lastTrace[i]);
-			}
-		}
+		// Gizmos/debug removed in slim version
 
 		static Vector2Int WorldToPixel(Vector3 world, Vector3 origin, float sizeX, float sizeZ, int res)
 		{
