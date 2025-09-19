@@ -64,6 +64,14 @@ namespace RiverTools
 		[Tooltip("Stop when total traced length exceeds this value (meters). 0 disables.")]
 		public float traceMaxLengthMeters = 0f;
 
+		[Header("Debug")]
+		public bool debugLog = false;
+		public bool debugGizmos = true;
+		public Color gizmoColor = new Color(1f, 0.2f, 1f, 1f);
+		System.Collections.Generic.List<Vector3> _lastTrace = new System.Collections.Generic.List<Vector3>();
+		int _lastEditedPixels = 0;
+		int _lastSteps = 0;
+
 		[ContextMenu("Carve Terrain")]
 		public void Carve()
 		{
@@ -73,6 +81,10 @@ namespace RiverTools
 				return;
 			}
 			#if UNITY_2022_2_OR_NEWER
+			_lastTrace.Clear();
+			_lastEditedPixels = 0;
+			_lastSteps = 0;
+
 			if (!carveFromStart)
 			{
 				if (spline == null || spline.Spline == null || spline.Spline.Count < 2)
@@ -137,7 +149,7 @@ namespace RiverTools
 					#endif
 
 					float uNorm = t;
-					ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY,
+					_lastEditedPixels += ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY,
 						center, forward, uNorm,
 						useRiverWidth && riverSource != null ? riverSource.baseHalfWidth * carveWidthScale : Mathf.Max(0.0001f, overrideHalfWidthMeters));
 				}
@@ -164,6 +176,7 @@ namespace RiverTools
 
 				for (int step = 0; step < traceMaxSteps; step++)
 				{
+					_lastSteps = step + 1;
 					// Compute downhill direction via terrain normal
 					Vector3 local = pos - origin;
 					float u = Mathf.Clamp01(local.x / sizeX);
@@ -185,7 +198,8 @@ namespace RiverTools
 
 					// normalized longitudinal progress approximation
 					float uNorm = (traceMaxLengthMeters > 0f) ? Mathf.Clamp01(traveled / traceMaxLengthMeters) : Mathf.Clamp01((float)step / Mathf.Max(1, traceMaxSteps - 1));
-					ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY,
+					_lastTrace.Add(pos);
+					_lastEditedPixels += ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY,
 						pos, forward, uNorm,
 						useRiverWidth && riverSource != null ? riverSource.baseHalfWidth * carveWidthScale : Mathf.Max(0.0001f, overrideHalfWidthMeters));
 
@@ -225,11 +239,16 @@ namespace RiverTools
 					terrain.terrainData.SetHeights(minX, minZ, region);
 				}
 			}
+
+			if (debugLog)
+			{
+				Debug.Log($"TerrainCarver: steps={_lastSteps}, editedPixels~={_lastEditedPixels}, mode={(carveFromStart ? "trace" : "spline")}");
+			}
 		}
 
 		int samplesPerSegmentClamp(int s) { return Mathf.Max(2, s); }
 
-		void ApplyTrenchAtCenter(ref float[,] heights, int res, Vector3 origin, float sizeX, float sizeZ, float sizeY,
+		int ApplyTrenchAtCenter(ref float[,] heights, int res, Vector3 origin, float sizeX, float sizeZ, float sizeY,
 			Vector3 center, Vector3 forward, float uNorm, float baseHalfWidthMeters)
 		{
 			float halfWidth = baseHalfWidthMeters * Mathf.Max(0.0001f, widthOverU.Evaluate(uNorm));
@@ -254,6 +273,7 @@ namespace RiverTools
 			// Note: We cannot update minX/minZ/maxX/maxZ here because they are local variables in Carve();
 			// we intentionally left region minimization as a whole SetHeights for simplicity in trace mode.
 
+			int edited = 0;
 			for (int z = z0; z <= z1; z++)
 			{
 				for (int x = x0; x <= x1; x++)
@@ -273,8 +293,10 @@ namespace RiverTools
 					float h = heights[z, x];
 					h = Mathf.Max(0f, h - deltaH);
 					heights[z, x] = h;
+					edited++;
 				}
 			}
+			return edited;
 		}
 
 		[ContextMenu("Capture Baseline From Current Terrain")]
@@ -307,6 +329,16 @@ namespace RiverTools
 			if (autoCarveOnValidate)
 			{
 				Carve();
+			}
+		}
+
+		void OnDrawGizmos()
+		{
+			if (!debugGizmos || _lastTrace == null || _lastTrace.Count < 2) return;
+			Gizmos.color = gizmoColor;
+			for (int i = 1; i < _lastTrace.Count; i++)
+			{
+				Gizmos.DrawLine(_lastTrace[i - 1], _lastTrace[i]);
 			}
 		}
 
