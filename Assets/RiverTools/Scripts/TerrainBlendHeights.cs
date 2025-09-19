@@ -25,9 +25,24 @@ namespace RiverTools
 		[Tooltip("Extra meters around the corridor to include in the edit region")]
 		public float editBoundsPadding = 4f;
 
+		[Tooltip("Scale corridor width along the river (U=0..1)")]
+		public AnimationCurve widthOverU = AnimationCurve.Linear(0, 1, 1, 1);
+		[Tooltip("Fade-in distance at start (meters) and fade-out at end")]
+		public float startFadeMeters = 0f;
+		public float endFadeMeters = 0f;
+		[Tooltip("Add noisy jitter to corridor edge (meters)")]
+		public float edgeNoiseMeters = 0f;
+		[Tooltip("Noise frequency for edge jitter (1/meter)")]
+		public float edgeNoiseScale = 0.2f;
+
 		[Header("Apply")]
 		[Tooltip("Apply to full heightmap if true; otherwise only the union of local windows per sample.")]
 		public bool applyFull = false;
+		[Tooltip("Only lower terrain: eroded cannot raise above baseline inside corridor.")]
+		public bool onlyLower = true;
+		[Tooltip("Apply only negative deltas (erosion). If enabled, we add (eroded-baseline)*deltaScale when it's negative.")]
+		public bool applyNegativeDeltaOnly = false;
+		public float deltaScale = 1.0f;
 
 		[ContextMenu("Blend Corridor From Eroded Into Baseline")]
 		public void Blend()
@@ -75,6 +90,8 @@ namespace RiverTools
 			int minX = res - 1, minZ = res - 1, maxX = 0, maxZ = 0;
 
 			#if UNITY_2022_2_OR_NEWER
+			float length = SplineUtility.CalculateLength(spline.Spline, (float4x4)spline.transform.localToWorldMatrix);
+			length = Mathf.Max(length, 1e-4f);
 			for (int i = 0; i < samplesAlong; i++)
 			{
 				float t = (float)i / (samplesAlong - 1);
@@ -86,7 +103,9 @@ namespace RiverTools
 				if (left.sqrMagnitude < 1e-6f) left = Vector3.left;
 				left.Normalize();
 
-				float radius = corridorHalfWidth + falloffMeters + editBoundsPadding;
+				float widthMul = Mathf.Max(0.0001f, widthOverU.Evaluate(t));
+				float halfWLocal = corridorHalfWidth * widthMul;
+				float radius = halfWLocal + falloffMeters + editBoundsPadding;
 				int pxRadiusX = Mathf.CeilToInt(radius / sizeX * (res - 1));
 				int pxRadiusZ = Mathf.CeilToInt(radius / sizeZ * (res - 1));
 				Vector2Int cpx = WorldToPixel(center, origin, sizeX, sizeZ, res);
@@ -106,15 +125,30 @@ namespace RiverTools
 						wp.y = center.y;
 						Vector3 d = wp - center;
 						float distAcross = Mathf.Abs(Vector3.Dot(d, left));
+						float effectiveHalf = halfWLocal;
+						if (edgeNoiseMeters > 0f)
+						{
+							float n = Mathf.PerlinNoise(wp.x * edgeNoiseScale, wp.z * edgeNoiseScale) * 2f - 1f;
+							effectiveHalf = Mathf.Max(0.05f, halfWLocal + n * edgeNoiseMeters);
+						}
 						float w = 0f;
-						if (distAcross <= corridorHalfWidth)
+						if (distAcross <= effectiveHalf)
 						{
 							w = 1f;
 						}
-						else if (falloffMeters > 0f && distAcross <= corridorHalfWidth + falloffMeters)
+						else if (falloffMeters > 0f && distAcross <= effectiveHalf + falloffMeters)
 						{
-							float a = (distAcross - corridorHalfWidth) / Mathf.Max(1e-4f, falloffMeters);
+							float a = (distAcross - effectiveHalf) / Mathf.Max(1e-4f, falloffMeters);
 							w = 1f - Mathf.SmoothStep(0f, 1f, a);
+						}
+						// End fade along length
+						if (startFadeMeters > 0f || endFadeMeters > 0f)
+						{
+							// approximate distance along using t
+							float sDist = t * length;
+							float startF = startFadeMeters <= 0f ? 1f : Mathf.Clamp01(sDist / startFadeMeters);
+							float endF = endFadeMeters <= 0f ? 1f : Mathf.Clamp01((length - sDist) / endFadeMeters);
+							w *= Mathf.Min(startF, endF);
 						}
 						if (w > mask[z, x]) mask[z, x] = w;
 					}
@@ -122,13 +156,53 @@ namespace RiverTools
 			}
 			#endif
 
+			// Optional blur of mask (simple box blur iterations)
+			void Blur(float[,] src, float[,] dst)
+			{
+				for (int z = 0; z < res; z++)
+				{
+					for (int x = 0; x < res; x++)
+					{
+						float sum = 0f; int cnt = 0;
+						for (int dz = -1; dz <= 1; dz++)
+						for (int dx = -1; dx <= 1; dx++)
+						{
+							int xx = x + dx; int zz = z + dz;
+							if (xx < 0 || xx >= res || zz < 0 || zz >= res) continue;
+							sum += src[zz, xx]; cnt++;
+						}
+						dst[z, x] = sum / Mathf.Max(1, cnt);
+					}
+				}
+			}
+			int blurIters = Mathf.Clamp((int)Mathf.Round(falloffMeters > 0f ? 1 : 0), 0, 4);
+			// make it dependent on falloffMeters implicitly; or expose a field if needed
+			if (blurIters > 0)
+			{
+				float[,] a = mask, b = new float[res, res];
+				for (int k = 0; k < blurIters; k++) { Blur(a, b); var tmp = a; a = b; b = tmp; }
+				mask = a;
+			}
+
 			// Compose output heights
 			for (int z = 0; z < res; z++)
 			{
 				for (int x = 0; x < res; x++)
 				{
 					float m = mask[z, x];
-					outH[z, x] = Mathf.Lerp(baseH[z, x], eroH[z, x], m);
+					float b = baseH[z, x];
+					float e = eroH[z, x];
+					if (onlyLower && e > b) e = b; // forbid raising terrain
+					if (applyNegativeDeltaOnly)
+					{
+						float d = (e - b);
+						if (d < 0f) outH[z, x] = Mathf.Clamp01(b + d * deltaScale * m);
+						else outH[z, x] = b;
+					}
+					else
+					{
+						outH[z, x] = Mathf.Lerp(b, e, m);
+					}
 				}
 			}
 
