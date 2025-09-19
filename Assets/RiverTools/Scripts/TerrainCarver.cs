@@ -259,21 +259,12 @@ namespace RiverTools
 			}
 			else
 			{
-				if (minX <= maxX && minZ <= maxZ)
+				// Apply full heightmap in spline mode to ensure complete corridor is written
+				if (postSmoothPasses > 0)
 				{
-					// Apply edited region back to terrain
-					int width = maxX - minX + 1;
-					int height = maxZ - minZ + 1;
-					float[,] region = new float[height, width];
-					for (int rz = 0; rz < height; rz++)
-					{
-						for (int rx = 0; rx < width; rx++)
-						{
-							region[rz, rx] = heights[minZ + rz, minX + rx];
-						}
-					}
-					terrain.terrainData.SetHeights(minX, minZ, region);
+					RunBoxBlur(ref heights, postSmoothPasses, postSmoothRadiusPx);
 				}
+				terrain.terrainData.SetHeights(0, 0, heights);
 			}
 
 			if (debugLog)
