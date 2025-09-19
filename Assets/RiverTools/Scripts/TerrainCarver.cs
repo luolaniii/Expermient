@@ -24,6 +24,12 @@ namespace RiverTools
 		[Tooltip("Softness of the river cross section edges (0=hard, 1=soft)")]
 		[Range(0f,1f)] public float edgeSoftness = 0.5f;
 
+		[Header("Spline Mode Options")]
+		[Tooltip("Project spline sample to terrain height before carving (so it always sits on ground).")]
+		public bool projectCenterToTerrain = true;
+		[Tooltip("Vertical offset applied after projecting center to terrain (negative makes the spline slightly below ground).")]
+		public float centerYOffset = -0.05f;
+
 		[Header("Width Source")]
 		[Tooltip("Use RiverFromSpline width as base and scale it for carving.")]
 		public bool useRiverWidth = false;
@@ -157,6 +163,12 @@ namespace RiverTools
 					#else
 					continue;
 					#endif
+
+					if (projectCenterToTerrain)
+					{
+						float y = terrain.SampleHeight(center) + origin.y + centerYOffset;
+						center.y = y;
+					}
 
 					float uNorm = t;
 					_lastEditedPixels += ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY,
