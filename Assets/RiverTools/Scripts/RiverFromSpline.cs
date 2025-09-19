@@ -30,9 +30,9 @@ namespace RiverTools
 
 		[Header("Shading/Stability")]
 		[Tooltip("When enabled, vertex colors encode path/gravity/foam weights; when off, vertex colors are white to avoid unintended tinting in shaders.")]
-		public bool writeVertexColors = true;
+		public bool writeVertexColors = false;
 		[Tooltip("Force normals to (0,1,0) after build to get stable lighting for water.")]
-		public bool forceUpNormals = false;
+		public bool forceUpNormals = true;
 		[Tooltip("Lift the surface slightly to prevent z-fighting with terrain.")]
 		public float surfaceYOffset = 0.02f;
 

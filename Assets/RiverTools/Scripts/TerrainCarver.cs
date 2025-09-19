@@ -18,7 +18,7 @@ namespace RiverTools
 
 		[Header("Carve Shape")]
 		[Min(0.1f)] public float baseHalfWidth = 2f;    // meters, each side
-		[Min(0.0f)] public float maxDepthMeters = 1.0f; // meters at center line
+		[Min(0.0f)] public float maxDepthMeters = 0.3f; // meters at center line (safer default)
 		public AnimationCurve widthOverU = AnimationCurve.Linear(0, 1, 1, 1);
 		public AnimationCurve depthOverU = AnimationCurve.Linear(0, 1, 1, 1);
 		[Tooltip("Softness of the river cross section edges (0=hard, 1=soft)")]
@@ -35,10 +35,10 @@ namespace RiverTools
 		public bool useRiverWidth = false;
 		public RiverFromSpline riverSource;
 		[Range(0.1f, 1.0f)] public float carveWidthScale = 0.7f; // narrower than river
-		[Min(0.1f)] public float overrideHalfWidthMeters = 2f;   // used when not using river width
+		[Min(0.1f)] public float overrideHalfWidthMeters = 2.5f; // used when not using river width
 
 		[Header("Sampling")]
-		[Min(8)] public int samplesAlong = 256;
+		[Min(8)] public int samplesAlong = 512;
 		[Tooltip("Inflate edit bounds in meters around the path to limit SetHeights region")]
 		public float editBoundsPadding = 5f;
 

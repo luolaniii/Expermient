@@ -41,7 +41,7 @@ namespace RiverTools
 		[Tooltip("Only lower terrain: eroded cannot raise above baseline inside corridor.")]
 		public bool onlyLower = true;
 		[Tooltip("Apply only negative deltas (erosion). If enabled, we add (eroded-baseline)*deltaScale when it's negative.")]
-		public bool applyNegativeDeltaOnly = false;
+		public bool applyNegativeDeltaOnly = true;
 		public float deltaScale = 1.0f;
 
 		[ContextMenu("Blend Corridor From Eroded Into Baseline")]
