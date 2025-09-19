@@ -24,6 +24,15 @@ namespace RiverTools
 		[Tooltip("Smooth the path by applying a moving average with this window size (meters)")]
 		public float smoothWindowMeters = 4f;
 
+		[Header("Stop Conditions (optional)")]
+		[Tooltip("If assigned, tracing will stop when reaching at or below this target's world Y height.")]
+		public Transform stopAtTargetHeight;
+		[Tooltip("If true and no target is provided, stop when reaching this world Y height.")]
+		public bool stopAtWorldHeight = false;
+		public float stopWorldHeightY = 0f;
+		[Tooltip("Stop when total traced length exceeds this value (meters). 0 disables.")]
+		public float maxLengthMeters = 0f;
+
 		[Header("Debug/Output")]
 		public Color gizmoColor = new Color(0.2f, 0.8f, 1f, 1f);
 		public bool drawGizmos = true;
@@ -57,6 +66,10 @@ namespace RiverTools
 
 			Vector3 pos = ClampInsideBounds(worldStart, terrainBounds, edgePaddingMeters);
 			int lowSlopeCount = 0;
+			float traveled = 0f;
+			float stopY = float.NegativeInfinity;
+			if (stopAtTargetHeight != null) stopY = stopAtTargetHeight.position.y;
+			else if (stopAtWorldHeight) stopY = stopWorldHeightY;
 
 			for (int i = 0; i < maxSteps; i++)
 			{
@@ -80,11 +93,16 @@ namespace RiverTools
 				if (moveXZ.sqrMagnitude < 1e-10f) break;
 
 				_rawPoints.Add(pos);
-				Vector3 next = pos + moveXZ.normalized * stepSizeMeters;
+				Vector3 step = moveXZ.normalized * stepSizeMeters;
+				Vector3 next = pos + step;
+				traveled += step.magnitude;
+				if (maxLengthMeters > 0f && traveled >= maxLengthMeters) { pos = next; break; }
 				// keep within bounds and glue to terrain height
 				next.x = Mathf.Clamp(next.x, terrainBounds.min.x + edgePaddingMeters, terrainBounds.max.x - edgePaddingMeters);
 				next.z = Mathf.Clamp(next.z, terrainBounds.min.z + edgePaddingMeters, terrainBounds.max.z - edgePaddingMeters);
 				next.y = SampleHeight(next);
+				// stop if reached height threshold
+				if (!float.IsNegativeInfinity(stopY) && next.y <= stopY) { pos = next; break; }
 				pos = next;
 			}
 
