@@ -202,20 +202,28 @@ namespace RiverTools
 				}
 			}
 
-			if (minX <= maxX && minZ <= maxZ)
+			if (carveFromStart)
 			{
-				// Apply edited region back to terrain
-				int width = maxX - minX + 1;
-				int height = maxZ - minZ + 1;
-				float[,] region = new float[height, width];
-				for (int rz = 0; rz < height; rz++)
+				// In direct trace mode, apply full heightmap to ensure changes are written
+				terrain.terrainData.SetHeights(0, 0, heights);
+			}
+			else
+			{
+				if (minX <= maxX && minZ <= maxZ)
 				{
-					for (int rx = 0; rx < width; rx++)
+					// Apply edited region back to terrain
+					int width = maxX - minX + 1;
+					int height = maxZ - minZ + 1;
+					float[,] region = new float[height, width];
+					for (int rz = 0; rz < height; rz++)
 					{
-						region[rz, rx] = heights[minZ + rz, minX + rx];
+						for (int rx = 0; rx < width; rx++)
+						{
+							region[rz, rx] = heights[minZ + rz, minX + rx];
+						}
 					}
+					terrain.terrainData.SetHeights(minX, minZ, region);
 				}
-				terrain.terrainData.SetHeights(minX, minZ, region);
 			}
 		}
 
