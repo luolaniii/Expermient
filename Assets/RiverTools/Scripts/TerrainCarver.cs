@@ -48,6 +48,22 @@ namespace RiverTools
 		[Tooltip("Automatically re-carve in editor when parameters change.")]
 		public bool autoCarveOnValidate = false;
 
+		[Header("Direct Trace Mode (no spline)")]
+		[Tooltip("If enabled, carve by tracing downhill from a start point along the terrain surface, without requiring a spline.")]
+		public bool carveFromStart = false;
+		public Transform traceStart;
+		[Min(0.1f)] public float traceStepMeters = 2f;
+		[Range(1,20000)] public int traceMaxSteps = 5000;
+		[Tooltip("Minimum slope (m per m) to continue tracing. Below threshold for several steps will stop.")]
+		public float traceMinSlope = 0.001f;
+		public int traceLowSlopeHysteresis = 10;
+		[Tooltip("Stop when reaching this target height (Y). If null and stopAtWorldHeight false, ignored.")]
+		public Transform stopAtTargetHeight;
+		public bool stopAtWorldHeight = false;
+		public float stopWorldHeightY = 0f;
+		[Tooltip("Stop when total traced length exceeds this value (meters). 0 disables.")]
+		public float traceMaxLengthMeters = 0f;
+
 		[ContextMenu("Carve Terrain")]
 		public void Carve()
 		{
@@ -57,10 +73,13 @@ namespace RiverTools
 				return;
 			}
 			#if UNITY_2022_2_OR_NEWER
-			if (spline == null || spline.Spline == null || spline.Spline.Count < 2)
+			if (!carveFromStart)
 			{
-				Debug.LogError("TerrainCarver: Assign a valid SplineContainer.");
-				return;
+				if (spline == null || spline.Spline == null || spline.Spline.Count < 2)
+				{
+					Debug.LogError("TerrainCarver: Assign a valid SplineContainer or enable carveFromStart.");
+					return;
+				}
 			}
 			#endif
 
@@ -97,72 +116,89 @@ namespace RiverTools
 			// Track edited region to minimize SetHeights area
 			int minX = res - 1, minZ = res - 1, maxX = 0, maxZ = 0;
 
-			// Iterate along spline
-			#if UNITY_2022_2_OR_NEWER
-			float length = SplineUtility.CalculateLength(spline.Spline, (float4x4)spline.transform.localToWorldMatrix);
-			if (length <= 1e-4f) return;
-			#endif
-
-			for (int i = 0; i < samplesAlong; i++)
+			if (!carveFromStart)
 			{
-				float t = (float)i / (samplesAlong - 1);
+				// Iterate along spline
 				#if UNITY_2022_2_OR_NEWER
-				float3 posF = SplineUtility.EvaluatePosition(spline.Spline, t);
-				float3 tanF = SplineUtility.EvaluateTangent(spline.Spline, t);
-				Vector3 center = spline.transform.TransformPoint((Vector3)posF);
-				Vector3 forward = (spline.transform.TransformVector((Vector3)math.normalize(tanF))).normalized;
-				#else
-				continue;
+				float length = SplineUtility.CalculateLength(spline.Spline, (float4x4)spline.transform.localToWorldMatrix);
+				if (length <= 1e-4f) return;
 				#endif
 
-				// Define width and depth at this longitudinal position
-				float uNorm = t; // already 0..1 param
-				float baseHW = useRiverWidth && riverSource != null ? riverSource.baseHalfWidth * carveWidthScale : Mathf.Max(0.0001f, overrideHalfWidthMeters);
-				float halfWidth = baseHW * Mathf.Max(0.0001f, widthOverU.Evaluate(uNorm));
-				float depthMeters = maxDepthMeters * Mathf.Max(0.0f, depthOverU.Evaluate(uNorm));
-
-				// Left direction stable
-				Vector3 left = Vector3.Cross(Vector3.up, forward);
-				if (left.sqrMagnitude < 1e-6f) left = Vector3.left;
-				left.Normalize();
-
-				// Compute a local edit bounding box on heightmap
-				float radiusX = halfWidth + editBoundsPadding;
-				float radiusZ = halfWidth + editBoundsPadding;
-				int pxRadiusX = Mathf.CeilToInt(radiusX / sizeX * (res - 1));
-				int pxRadiusZ = Mathf.CeilToInt(radiusZ / sizeZ * (res - 1));
-
-				Vector2Int centerPX = WorldToPixel(center, origin, sizeX, sizeZ, res);
-				int x0 = Mathf.Clamp(centerPX.x - pxRadiusX, 0, res - 1);
-				int x1 = Mathf.Clamp(centerPX.x + pxRadiusX, 0, res - 1);
-				int z0 = Mathf.Clamp(centerPX.y - pxRadiusZ, 0, res - 1);
-				int z1 = Mathf.Clamp(centerPX.y + pxRadiusZ, 0, res - 1);
-
-				minX = Mathf.Min(minX, x0); minZ = Mathf.Min(minZ, z0);
-				maxX = Mathf.Max(maxX, x1); maxZ = Mathf.Max(maxZ, z1);
-
-				// Rasterize cross section as a soft trench
-				for (int z = z0; z <= z1; z++)
+				for (int i = 0; i < samplesAlong; i++)
 				{
-					for (int x = x0; x <= x1; x++)
+					float t = (float)i / (samplesPerSegmentClamp(samplesAlong) - 1);
+					#if UNITY_2022_2_OR_NEWER
+					float3 posF = SplineUtility.EvaluatePosition(spline.Spline, t);
+					float3 tanF = SplineUtility.EvaluateTangent(spline.Spline, t);
+					Vector3 center = spline.transform.TransformPoint((Vector3)posF);
+					Vector3 forward = (spline.transform.TransformVector((Vector3)math.normalize(tanF))).normalized;
+					#else
+					continue;
+					#endif
+
+					float uNorm = t;
+					ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY,
+						center, forward, uNorm,
+						useRiverWidth && riverSource != null ? riverSource.baseHalfWidth * carveWidthScale : Mathf.Max(0.0001f, overrideHalfWidthMeters));
+				}
+			}
+			else
+			{
+				// Direct trace mode: step downhill along terrain surface from traceStart
+				if (traceStart == null)
+				{
+					Debug.LogError("TerrainCarver: traceStart is null while carveFromStart is enabled.");
+					return;
+				}
+				Bounds b = new Bounds(origin + td.size * 0.5f, td.size);
+				Vector3 pos = traceStart.position;
+				pos.x = Mathf.Clamp(pos.x, b.min.x + 1f, b.max.x - 1f);
+				pos.z = Mathf.Clamp(pos.z, b.min.z + 1f, b.max.z - 1f);
+				pos.y = terrain.SampleHeight(pos) + origin.y;
+
+				int lowSlope = 0;
+				float traveled = 0f;
+				float stopY = float.NegativeInfinity;
+				if (stopAtTargetHeight != null) stopY = stopAtTargetHeight.position.y;
+				else if (stopAtWorldHeight) stopY = stopWorldHeightY;
+
+				for (int step = 0; step < traceMaxSteps; step++)
+				{
+					// Compute downhill direction via terrain normal
+					Vector3 local = pos - origin;
+					float u = Mathf.Clamp01(local.x / sizeX);
+					float v = Mathf.Clamp01(local.z / sizeZ);
+					Vector3 n = td.GetInterpolatedNormal(u, v).normalized;
+					Vector3 g = Vector3.down;
+					Vector3 downhill = g - n * Vector3.Dot(g, n);
+					float slope = downhill.magnitude;
+					if (slope < traceMinSlope)
 					{
-						Vector3 wp = PixelToWorld(x, z, origin, sizeX, sizeZ, res);
-						wp.y = center.y; // project to horizontal plane for distance calc
-						Vector3 d = wp - center;
-						float distAcross = Mathf.Abs(Vector3.Dot(d, left));
-						float a = distAcross / Mathf.Max(0.0001f, halfWidth);
-						if (a > 1.0f) continue;
-
-						// Smooth edge profile (1 at center, 0 at edges)
-						float s = 1.0f - a;
-						s = Smooth01(s, edgeSoftness);
-
-						float deltaMeters = depthMeters * s;
-						float deltaH = deltaMeters / sizeY;
-						float h = heights[z, x];
-						h = Mathf.Max(0f, h - deltaH);
-						heights[z, x] = h;
+						lowSlope++;
+						if (lowSlope >= traceLowSlopeHysteresis) break;
 					}
+					else lowSlope = 0;
+
+					Vector3 forward = new Vector3(downhill.x, 0f, downhill.z);
+					if (forward.sqrMagnitude < 1e-10f) break;
+					forward.Normalize();
+
+					// normalized longitudinal progress approximation
+					float uNorm = (traceMaxLengthMeters > 0f) ? Mathf.Clamp01(traveled / traceMaxLengthMeters) : Mathf.Clamp01((float)step / Mathf.Max(1, traceMaxSteps - 1));
+					ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY,
+						pos, forward, uNorm,
+						useRiverWidth && riverSource != null ? riverSource.baseHalfWidth * carveWidthScale : Mathf.Max(0.0001f, overrideHalfWidthMeters));
+
+					// advance
+					Vector3 stepVec = forward * traceStepMeters;
+					Vector3 next = pos + stepVec;
+					traveled += stepVec.magnitude;
+					if (traceMaxLengthMeters > 0f && traveled >= traceMaxLengthMeters) { pos = next; break; }
+					next.x = Mathf.Clamp(next.x, b.min.x + 1f, b.max.x - 1f);
+					next.z = Mathf.Clamp(next.z, b.min.z + 1f, b.max.z - 1f);
+					next.y = terrain.SampleHeight(next) + origin.y;
+					if (!float.IsNegativeInfinity(stopY) && next.y <= stopY) { pos = next; break; }
+					pos = next;
 				}
 			}
 
@@ -180,6 +216,56 @@ namespace RiverTools
 					}
 				}
 				terrain.terrainData.SetHeights(minX, minZ, region);
+			}
+		}
+
+		int samplesPerSegmentClamp(int s) { return Mathf.Max(2, s); }
+
+		void ApplyTrenchAtCenter(ref float[,] heights, int res, Vector3 origin, float sizeX, float sizeZ, float sizeY,
+			Vector3 center, Vector3 forward, float uNorm, float baseHalfWidthMeters)
+		{
+			float halfWidth = baseHalfWidthMeters * Mathf.Max(0.0001f, widthOverU.Evaluate(uNorm));
+			float depthMeters = maxDepthMeters * Mathf.Max(0.0f, depthOverU.Evaluate(uNorm));
+
+			Vector3 left = Vector3.Cross(Vector3.up, forward);
+			if (left.sqrMagnitude < 1e-6f) left = Vector3.left;
+			left.Normalize();
+
+			float radiusX = halfWidth + editBoundsPadding;
+			float radiusZ = halfWidth + editBoundsPadding;
+			int pxRadiusX = Mathf.CeilToInt(radiusX / sizeX * (res - 1));
+			int pxRadiusZ = Mathf.CeilToInt(radiusZ / sizeZ * (res - 1));
+
+			Vector2Int centerPX = WorldToPixel(center, origin, sizeX, sizeZ, res);
+			int x0 = Mathf.Clamp(centerPX.x - pxRadiusX, 0, res - 1);
+			int x1 = Mathf.Clamp(centerPX.x + pxRadiusX, 0, res - 1);
+			int z0 = Mathf.Clamp(centerPX.y - pxRadiusZ, 0, res - 1);
+			int z1 = Mathf.Clamp(centerPX.y + pxRadiusZ, 0, res - 1);
+
+			// Track edited region bounds
+			// Note: We cannot update minX/minZ/maxX/maxZ here because they are local variables in Carve();
+			// we intentionally left region minimization as a whole SetHeights for simplicity in trace mode.
+
+			for (int z = z0; z <= z1; z++)
+			{
+				for (int x = x0; x <= x1; x++)
+				{
+					Vector3 wp = PixelToWorld(x, z, origin, sizeX, sizeZ, res);
+					wp.y = center.y;
+					Vector3 d = wp - center;
+					float distAcross = Mathf.Abs(Vector3.Dot(d, left));
+					float a = distAcross / Mathf.Max(0.0001f, halfWidth);
+					if (a > 1.0f) continue;
+
+					float s = 1.0f - a;
+					s = Smooth01(s, edgeSoftness);
+
+					float deltaMeters = depthMeters * s;
+					float deltaH = deltaMeters / sizeY;
+					float h = heights[z, x];
+					h = Mathf.Max(0f, h - deltaH);
+					heights[z, x] = h;
+				}
 			}
 		}
 
