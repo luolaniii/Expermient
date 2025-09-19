@@ -64,6 +64,16 @@ namespace RiverTools
 		[Tooltip("Stop when total traced length exceeds this value (meters). 0 disables.")]
 		public float traceMaxLengthMeters = 0f;
 
+		[Header("Continuity/Smoothing")]
+		[Tooltip("Fill gaps between stamps by stamping along the path segment.")]
+		public bool fillGaps = true;
+		[Tooltip("Max spacing between consecutive stamps as a factor of half width (<=1). 0.5 means stamp every half-width.")]
+		[Range(0.1f, 1f)] public float maxStampSpacingHalfWidthFactor = 0.5f;
+		[Tooltip("Optional box-blur passes over carved corridor to smooth pits.")]
+		[Range(0,4)] public int postSmoothPasses = 0;
+		[Tooltip("Box blur radius (in pixels) for post-smoothing.")]
+		[Range(1,3)] public int postSmoothRadiusPx = 1;
+
 		[Header("Debug")]
 		public bool debugLog = false;
 		public bool debugGizmos = true;
@@ -174,6 +184,7 @@ namespace RiverTools
 				if (stopAtTargetHeight != null) stopY = stopAtTargetHeight.position.y;
 				else if (stopAtWorldHeight) stopY = stopWorldHeightY;
 
+				Vector3 prevCenter = pos;
 				for (int step = 0; step < traceMaxSteps; step++)
 				{
 					_lastSteps = step + 1;
@@ -199,9 +210,17 @@ namespace RiverTools
 					// normalized longitudinal progress approximation
 					float uNorm = (traceMaxLengthMeters > 0f) ? Mathf.Clamp01(traveled / traceMaxLengthMeters) : Mathf.Clamp01((float)step / Mathf.Max(1, traceMaxSteps - 1));
 					_lastTrace.Add(pos);
-					_lastEditedPixels += ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY,
-						pos, forward, uNorm,
-						useRiverWidth && riverSource != null ? riverSource.baseHalfWidth * carveWidthScale : Mathf.Max(0.0001f, overrideHalfWidthMeters));
+					float baseHW = useRiverWidth && riverSource != null ? riverSource.baseHalfWidth * carveWidthScale : Mathf.Max(0.0001f, overrideHalfWidthMeters);
+					if (fillGaps)
+					{
+						_lastEditedPixels += ApplyTrenchAlongSegment(ref heights, res, origin, sizeX, sizeZ, sizeY,
+							prevCenter, pos, forward, uNorm, baseHW);
+					}
+					else
+					{
+						_lastEditedPixels += ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY,
+							pos, forward, uNorm, baseHW);
+					}
 
 					// advance
 					Vector3 stepVec = forward * traceStepMeters;
@@ -212,6 +231,7 @@ namespace RiverTools
 					next.z = Mathf.Clamp(next.z, b.min.z + 1f, b.max.z - 1f);
 					next.y = terrain.SampleHeight(next) + origin.y;
 					if (!float.IsNegativeInfinity(stopY) && next.y <= stopY) { pos = next; break; }
+					prevCenter = pos;
 					pos = next;
 				}
 			}
@@ -219,6 +239,10 @@ namespace RiverTools
 			if (carveFromStart)
 			{
 				// In direct trace mode, apply full heightmap to ensure changes are written
+				if (postSmoothPasses > 0)
+				{
+					RunBoxBlur(ref heights, postSmoothPasses, postSmoothRadiusPx);
+				}
 				terrain.terrainData.SetHeights(0, 0, heights);
 			}
 			else
@@ -297,6 +321,52 @@ namespace RiverTools
 				}
 			}
 			return edited;
+		}
+
+		int ApplyTrenchAlongSegment(ref float[,] heights, int res, Vector3 origin, float sizeX, float sizeZ, float sizeY,
+			Vector3 from, Vector3 to, Vector3 forwardHint, float uNorm, float baseHalfWidthMeters)
+		{
+			float halfWidth = baseHalfWidthMeters * Mathf.Max(0.0001f, widthOverU.Evaluate(uNorm));
+			float segmentLen = Vector3.Distance(from, to);
+			if (segmentLen < 1e-4f) return 0;
+			float maxStep = Mathf.Max(0.1f, halfWidth * maxStampSpacingHalfWidthFactor);
+			int steps = Mathf.CeilToInt(segmentLen / maxStep);
+			int edited = 0;
+			for (int i = 0; i <= steps; i++)
+			{
+				float t = steps == 0 ? 0f : (float)i / steps;
+				Vector3 c = Vector3.Lerp(from, to, t);
+				Vector3 fwd = (to - from).sqrMagnitude > 1e-6f ? (to - from).normalized : forwardHint;
+				edited += ApplyTrenchAtCenter(ref heights, res, origin, sizeX, sizeZ, sizeY, c, fwd, uNorm, baseHalfWidthMeters);
+			}
+			return edited;
+		}
+
+		void RunBoxBlur(ref float[,] h, int passes, int radius)
+		{
+			int res = h.GetLength(0);
+			radius = Mathf.Clamp(radius, 1, 3);
+			float[,] tmp = new float[res, res];
+			for (int p = 0; p < passes; p++)
+			{
+				for (int z = 0; z < res; z++)
+				{
+					for (int x = 0; x < res; x++)
+					{
+						float sum = 0f; int cnt = 0;
+						for (int dz = -radius; dz <= radius; dz++)
+						for (int dx = -radius; dx <= radius; dx++)
+						{
+							int xx = x + dx, zz = z + dz;
+							if (xx < 0 || xx >= res || zz < 0 || zz >= res) continue;
+							sum += h[zz, xx]; cnt++;
+						}
+						tmp[z, x] = sum / Mathf.Max(1, cnt);
+					}
+				}
+				// swap
+				var t = h; h = tmp; tmp = t;
+			}
 		}
 
 		[ContextMenu("Capture Baseline From Current Terrain")]
